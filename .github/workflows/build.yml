@@ -4,129 +4,60 @@ on:
   push:
     tags:
       - 'v*'
+  release:
+    types: [published]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version tag (e.g., v1.1.0)'
-        required: true
-        default: 'v1.1.0'
 
 jobs:
   build:
     strategy:
       matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
         include:
           - os: windows-latest
-            output: BrowserFortify-windows.exe
-            build_cmd: |
-              python -m pip install --upgrade pip pyinstaller
-              pyinstaller --onefile --name BrowserFortify --console browserfortify.py
-              move dist/BrowserFortify.exe BrowserFortify-windows.exe
-          
-          - os: ubuntu-latest
-            output: BrowserFortify-linux
-            build_cmd: |
-              python3 -m pip install --upgrade pip pyinstaller
-              pyinstaller --onefile --name BrowserFortify --console browserfortify.py
-              mv dist/BrowserFortify BrowserFortify-linux
-              chmod +x BrowserFortify-linux
-          
+            artifact_name: BrowserFortify-Windows.exe
+          - os: ubuntu-latest  
+            artifact_name: BrowserFortify-Linux
           - os: macos-latest
-            output: BrowserFortify-macos
-            build_cmd: |
-              python3 -m pip install --upgrade pip pyinstaller
-              pyinstaller --onefile --name BrowserFortify --console browserfortify.py
-              mv dist/BrowserFortify BrowserFortify-macos
-              chmod +x BrowserFortify-macos
+            artifact_name: BrowserFortify-macOS
 
     runs-on: ${{ matrix.os }}
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
     
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller
+        # Install common dependencies
+        pip install requests beautifulsoup4 lxml selenium webdriver-manager || true
+      shell: bash
+    
     - name: Build executable
-      run: ${{ matrix.build_cmd }}
+      run: |
+        if [ "${{ matrix.os }}" == "windows-latest" ]; then
+          pyinstaller --onefile --windowed --name BrowserFortify-Windows browserfortify.py
+        else
+          pyinstaller --onefile --name ${{ matrix.artifact_name }} browserfortify.py
+        fi
+      shell: bash
     
     - name: Upload artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v3
       with:
-        name: ${{ matrix.output }}
-        path: ${{ matrix.output }}
-        retention-days: 90
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        name: ${{ matrix.artifact_name }}
+        path: dist/${{ matrix.artifact_name }}
     
-    steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-    
-    - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+    - name: Upload to release (if tag)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: dist/${{ matrix.artifact_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ github.ref_name || github.event.inputs.version }}
-        release_name: BrowserFortify ${{ github.ref_name || github.event.inputs.version }}
-        body: |
-          ## BrowserFortify Release
-          
-          Cross-platform browser security remediation tool.
-          
-          **Downloads:**
-          - Windows: `BrowserFortify-windows.exe`
-          - Linux: `BrowserFortify-linux` 
-          - macOS: `BrowserFortify-macos`
-          
-          **Usage:**
-          ```bash
-          # Scan only
-          ./BrowserFortify --scan-only
-          
-          # Full remediation with backup
-          ./BrowserFortify --remediate --backup --clear-data --remove-suspicious
-          
-          # Reset browser profiles (nuclear option)
-          ./BrowserFortify --remediate --reset-profiles --backup
-          ```
-        draft: false
-        prerelease: false
-    
-    - name: Upload Windows Binary
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./BrowserFortify-windows.exe/BrowserFortify-windows.exe
-        asset_name: BrowserFortify-windows.exe
-        asset_content_type: application/octet-stream
-    
-    - name: Upload Linux Binary
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./BrowserFortify-linux/BrowserFortify-linux
-        asset_name: BrowserFortify-linux
-        asset_content_type: application/octet-stream
-    
-    - name: Upload macOS Binary
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./BrowserFortify-macos/BrowserFortify-macos
-        asset_name: BrowserFortify-macos
-        asset_content_type: application/octet-stream
